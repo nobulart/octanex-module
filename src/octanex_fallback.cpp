@@ -38,7 +38,7 @@ int s_next_obj_id = 1;
  */
 std::string get_queue_path() {
     // Return the path to the queue directory
-    return OctaneX::get_queue_path();
+    return "queue";
 }
 
 /**
@@ -145,7 +145,7 @@ std::string file_queue_execute(const char* op, const char* payload) {
     // Read the result from the file queue
     char result[1024];
     int rc = read_queue_command(
-        result, nullptr, sizeof(result), sizeof(result)
+        result, nullptr, sizeof(result), sizeof(result), nullptr
     );
     
     if (rc != 0) {

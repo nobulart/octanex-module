@@ -9,8 +9,17 @@
 #ifndef OCTANEX_COMMANDS_H
 #define OCTANEX_COMMANDS_H
 
+#ifdef __cplusplus
 #include <string>
 #include <vector>
+#define OCTANEX_NULLPTR nullptr
+#else
+#include <stddef.h>
+#include <stdlib.h>
+#define OCTANEX_NULLPTR NULL
+typedef void* std_string;
+typedef void* std_vector;
+#endif
 
 /*
  * OTOY MODULE API types (vendored)
@@ -65,7 +74,7 @@ struct CommandEntry {
 };
 
 // Command dispatch table
-extern const CommandEntry COMMAND_TABLE[];
+extern const struct CommandEntry COMMAND_TABLE[];
 extern const size_t COMMAND_TABLE_SIZE;
 
 /*
@@ -86,7 +95,7 @@ int unregister_command(const char* op);
  */
 
 // Parse a JSON string (simple implementation)
-// Returns a pointer to the parsed value, or nullptr on error
+// Returns a pointer to the parsed value, or NULL on error
 const char* parse_json_value(const char* json, const char* key);
 
 // Parse a JSON value as int
@@ -114,14 +123,14 @@ void free_json_string(char* str);
 
 // OctaneModuleInfo: module registration info
 struct OctaneModuleInfo {
-    const char* name;          // Module name (e.g., "OctaneX")
-    const char* display_name;  // Display name (e.g., "Octane X Module")
-    const char* module_id;     // Module ID (e.g., "module_id")
-    const char* type;          // Module type (e.g., "COMMAND|WORK_PANE")
+    const char* name;
+    const char* display_name;
+    const char* module_id;
+    const char* type;
 };
 
 // Module registration
-void register_module(const OctaneModuleInfo* info);
+void register_module(const struct OctaneModuleInfo* info);
 
 // Module unregistration
 void unregister_module(const char* module_id);
@@ -169,13 +178,6 @@ typedef struct {
     float (*getCameraFov)(void);
     void (*setCameraFov)(float fov);
 } RenderEngineFuncs;
-
-// Scene methods
-typedef struct {
-    void (*getObjects)(std::vector<std::string>* objects);
-    void (*getMaterials)(std::vector<std::string>* materials);
-    int (*getGraph)(void);
-} SceneFuncs;
 
 /*
  * OTOY logging

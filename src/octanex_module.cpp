@@ -63,18 +63,16 @@ public:
      */
     std::string handle_current_command() {
         // Get current command from the command queue
-        const char* op = getCurrentOp();
-        const char* payload = getCurrentPayload();
+        const char* op = this->getCurrentOp();
+        const char* payload = this->getCurrentPayload();
 
         if (s_use_file_queue) {
             // Use fallback to file queue
-            return file_queue_execute(op, payload);
+            return OctaneX::Fallback::file_queue_execute(op, payload);
         }
 
         // Direct API dispatch
-        OctaneXModule::CommandHandler handler;
-        std::string result = handler(op, payload);
-        return result;
+        return OctaneXModule::CommandHandler::dispatch(this, op, payload);
     }
 
     /*
@@ -85,9 +83,9 @@ public:
         s_module_loaded = true;
 
         // Get API references
-        m_project_mgr = ApiAppCore::getAppCore()->getProjectManager();
-        m_render_engine = ApiAppCore::getAppCore()->getRenderEngine();
-        m_scene = ApiAppCore::getAppCore()->getScene();
+        m_project_mgr = (ApiProjectManager*)(ApiAppCore::getAppCore()->getProjectManager());
+        m_render_engine = (ApiRenderEngine*)(ApiAppCore::getAppCore()->getRenderEngine());
+        m_scene = (ApiScene*)(ApiAppCore::getAppCore()->getScene());
 
         // Register module with Octane
         ApiModule::registerModule(
@@ -109,15 +107,15 @@ public:
         }
 
         // Start the module thread (if needed)
-        start_internal_thread();
+        this->start_internal_thread();
     }
 
     virtual void stop(void) override {
         // Flush pending commands
-        flush_pending_commands();
+        this->flush_pending_commands();
 
         // Stop the module thread
-        stop_internal_thread();
+        this->stop_internal_thread();
 
         s_module_loaded = false;
         s_module_instance = nullptr;
@@ -264,8 +262,8 @@ public:
         Vec3 target = m_scene->getCameraTarget();
         float fov = m_scene->getCameraFov();
         json << ",\"camera\":{";
-        json << "\"position\":[\" << pos.x \",\"," << pos.y "," << pos.z "],";
-        json << "\"target\":[\"" << target.x "\"," << target.y "," << target.z "],";
+        json << "\"position\":[" << pos.x << "," << pos.y << "," << pos.z << "],";
+        json << "\"target\":[" << target.x << "," << target.y << "," << target.z << "],";
         json << "\"fov\"" << fov;
         json << "}";
         json << "}";
@@ -391,22 +389,22 @@ public:
      * Command handler
      */
     struct CommandHandler {
-        std::string operator()(const char* op, const char* payload_json) {
+        static std::string dispatch(OctaneXModule* self, const char* op, const char* payload_json) {
             // Dispatch commands based on operation name
             if (strcmp(op, "import_geometry") == 0) {
                 // Parse payload
-                const char* path = get_json_value(payload_json, "path");
-                const char* name = get_json_value(payload_json, "name");
+                const char* path = self->get_json_value(payload_json, "path");
+                const char* name = self->get_json_value(payload_json, "name");
                 return "import_geometry result";
             }
             else if (strcmp(op, "create_material") == 0) {
-                const char* name = get_json_value(payload_json, "name");
+                const char* name = self->get_json_value(payload_json, "name");
                 // Parse color, roughness, metallic
                 return "create_material result";
             }
             else if (strcmp(op, "assign_material") == 0) {
-                const char* object_name = get_json_value(payload_json, "object_name");
-                const char* material_name = get_json_value(payload_json, "material_name");
+                const char* object_name = self->get_json_value(payload_json, "object_name");
+                const char* material_name = self->get_json_value(payload_json, "material_name");
                 return "assign_material result";
             }
             else if (strcmp(op, "set_camera") == 0) {
@@ -418,37 +416,39 @@ public:
                 return "start_render result";
             }
             else if (strcmp(op, "save_preview") == 0) {
-                const char* path = get_json_value(payload_json, "path");
-                int samples = get_json_int_value(payload_json, "samples", 128);
-                save_preview_impl(path, samples);
+                const char* path = self->get_json_value(payload_json, "path");
+                int samples = self->get_json_int_value(payload_json, "samples", 128);
+                self->save_preview_impl(path, samples);
                 return "save_preview result";
             }
             else if (strcmp(op, "scene_summary") == 0) {
                 char summary[4096];
-                cmd_scene_summary(summary, sizeof(summary));
+                self->cmd_scene_summary(summary, sizeof(summary));
                 return summary;
             }
             else if (strcmp(op, "list_objects") == 0) {
                 char objects[4096];
-                cmd_list_objects(objects, sizeof(objects));
+                self->cmd_list_objects(objects, sizeof(objects));
                 return objects;
             }
             else if (strcmp(op, "list_materials") == 0) {
                 char materials[4096];
-                cmd_list_materials(materials, sizeof(materials));
+                self->cmd_list_materials(materials, sizeof(materials));
                 return materials;
             }
             else if (strcmp(op, "get_node_property") == 0) {
-                const char* node_name = get_json_value(payload_json, "node_name");
-                const char* property_name = get_json_value(payload_json, "property_name");
+                const char* node_name = self->get_json_value(payload_json, "node_name");
+                const char* property_name = self->get_json_value(payload_json, "property_name");
                 char result[1024];
-                cmd_get_node_property(node_name, property_name, result, sizeof(result));
+                self->cmd_get_node_property(node_name, property_name, result, sizeof(result));
                 return result;
             }
             else {
                 return "Unknown operation";
             }
         }
+
+        std::string operator()(const char* op, const char* payload_json) {
     };
 
     // Get a value from a JSON payload string
