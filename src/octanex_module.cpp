@@ -69,10 +69,10 @@ public:
         if (s_use_file_queue) {
             // Use fallback to file queue
             return OctaneX::Fallback::file_queue_execute(op, payload);
-            }
+        }
 
-            // Direct API dispatch
-            static std::string dispatch(OctaneXModule* self, const char* op, const char* payload)
+        // Direct API dispatch
+        return OctaneXModule::CommandHandler::dispatch(this, op, payload);
     }
 
     /*
@@ -83,7 +83,7 @@ public:
         s_module_loaded = true;
 
         // Get API references
-        ApiModule::registerModule(this, "Octanex Bridge", "octanex", ApiModule::COMMAND);
+        ApiModule::registerModule((ApiModule*)this, "Octanex Bridge", "octanex", ApiModule::COMMAND);
         m_project_mgr = (ApiProjectManager*)(ApiAppCore::getAppCore()->getProjectManager());
         m_render_engine = (ApiRenderEngine*)(ApiAppCore::getAppCore()->getRenderEngine());
         m_scene = (ApiScene*)(ApiAppCore::getAppCore()->getScene());
@@ -442,6 +442,8 @@ public:
         }
 
         std::string operator()(const char* op, const char* payload_json) {
+            return dispatch(this, op, payload_json);
+        }
     };
 
     // Get a value from a JSON payload string
@@ -462,6 +464,7 @@ public:
         // ... save preview implementation
     }
 
+private:
     ApiProjectManager* m_project_mgr;
     ApiRenderEngine* m_render_engine;
     ApiScene* m_scene;

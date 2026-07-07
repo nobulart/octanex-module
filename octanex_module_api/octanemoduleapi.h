@@ -82,6 +82,7 @@ public:
 };
 
 /* OctaneXModule forward declaration — definition in octanex_module.cpp */
+class OctaneXModule;
 
 #if !defined(__OCTANE_MODULE_INFO_DECLARED)
 #define __OCTANE_MODULE_INFO_DECLARED
@@ -92,9 +93,6 @@ struct OctaneModuleInfo {
     const char* type;
 };
 #endif
-
-/* Forward declare OctaneXModule before full class definition */
-class OctaneXModule;
 
 class ApiProjectManager {
 public:
