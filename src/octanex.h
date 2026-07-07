@@ -27,9 +27,7 @@
 typedef std::string string_t;
 typedef std::vector<string_t> string_list_t;
 
-#ifdef __cplusplus
 extern "C" {
-#endif
 
 /* C-compatible types */
 typedef struct {
@@ -40,9 +38,7 @@ typedef struct {
     float x, y, z, w;
 } vec4;
 
-#ifdef __cplusplus
 } /* extern "C" */
-#endif
 
 /* OTOY module registration */
 typedef struct {
@@ -51,5 +47,7 @@ typedef struct {
     const char* module_id;
     const char* type;
 } OtoyModuleInfo;
+
+#endif /* __cplusplus */
 
 #endif /* OCTANEX_H */

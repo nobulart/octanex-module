@@ -122,12 +122,14 @@ void free_json_string(char* str);
  */
 
 // OctaneModuleInfo: module registration info
+#if !defined(__OCTANE_MODULE_INFO_DECLARED)
 struct OctaneModuleInfo {
     const char* name;
     const char* display_name;
     const char* module_id;
     const char* type;
 };
+#endif
 
 // Module registration
 void register_module(const struct OctaneModuleInfo* info);

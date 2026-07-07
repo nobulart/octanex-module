@@ -34,7 +34,7 @@ class OctaneXModule : public OctaneCommandModule, public ApiWorkPaneModule {
 public:
     /* CommandModule interface */
     virtual void execute(void) override {
-        std::string result = handle_current_command();
+        std::string result = this->handle_current_command();
     }
 
     virtual const char* getName(void) const override {
@@ -69,10 +69,10 @@ public:
         if (s_use_file_queue) {
             // Use fallback to file queue
             return OctaneX::Fallback::file_queue_execute(op, payload);
-        }
+            }
 
-        // Direct API dispatch
-        return OctaneXModule::CommandHandler::dispatch(this, op, payload);
+            // Direct API dispatch
+            static std::string dispatch(OctaneXModule* self, const char* op, const char* payload)
     }
 
     /*
@@ -83,17 +83,10 @@ public:
         s_module_loaded = true;
 
         // Get API references
+        ApiModule::registerModule(this, "Octanex Bridge", "octanex", ApiModule::COMMAND);
         m_project_mgr = (ApiProjectManager*)(ApiAppCore::getAppCore()->getProjectManager());
         m_render_engine = (ApiRenderEngine*)(ApiAppCore::getAppCore()->getRenderEngine());
         m_scene = (ApiScene*)(ApiAppCore::getAppCore()->getScene());
-
-        // Register module with Octane
-        ApiModule::registerModule(
-            this,
-            "Octanex Bridge",
-            "octanex",
-            ApiModule::COMMAND
-        );
 
         // Initialize log
         s_log_file = getModulePath();
@@ -469,10 +462,9 @@ public:
         // ... save preview implementation
     }
 
-    // Private members (API references)
-    ApiProjectManager* m_project_mgr = nullptr;
-    ApiRenderEngine* m_render_engine = nullptr;
-    ApiScene* m_scene = nullptr;
+    ApiProjectManager* m_project_mgr;
+    ApiRenderEngine* m_render_engine;
+    ApiScene* m_scene;
 };
 
 /*
@@ -534,7 +526,7 @@ extern "C" const char* modGetName(void) {
  * Module type (exported)
  */
 extern "C" const char* modGetType(void) {
-    return g_module_instance.getModuleType();
+    return ::getModuleType();
 }
 
 /*
@@ -544,13 +536,15 @@ extern "C" const char* modGetType(void) {
 /**
  * Module info (exported)
  */
-extern "C" OctaneModuleInfo getModuleInfo(void) {
+extern "C" {
+OctaneModuleInfo getModuleInfo(void) {
     OctaneModuleInfo info;
     info.name = getModuleName();
     info.type = ApiModule::COMMAND;
-    info.start = modStart;
-    info.stop = modStop;
-    info.execute = modExecute;
+    // Convert function pointers to void*
+    info.start = (void (*)(void))(void(*)(void))modStart;
+    info.stop = (void (*)(void))(void(*)(void))modStop;
+    info.execute = (void (*)(void))(void(*)(void))modExecute;
     return info;
 }
 

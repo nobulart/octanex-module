@@ -32,15 +32,11 @@ typedef struct ApiGraph ApiGraph;
 typedef struct OctaneNode OctaneNode;
 typedef struct ApiMaterial ApiMaterial;
 typedef struct ApiLogManager ApiLogManager;
+typedef struct OctaneXModule OctaneXModule;
 #endif
 
 /* --- OTOY API types --- */
 #ifdef __cplusplus
-
-/* Forward declarations — used before full class definitions */
-class ApiScene;
-class ApiGraph;
-class ApiMaterial;
 
 class Vec3 {
 public:
@@ -85,25 +81,21 @@ public:
     virtual void createWindow();
 };
 
-/* Forward declare ApiLogManager before ApiAppCore uses it */
-class ApiLogManager;
+/* OctaneXModule forward declaration — definition in octanex_module.cpp */
 
-class ApiAppCore {
-public:
-    static ApiAppCore* getAppCore();
-    virtual ~ApiAppCore();
-    virtual void* getProjectManager();
-    virtual void* getRenderEngine();
-    virtual void* getScene();
-    ApiLogManager* getCurrentOp();
-    virtual ApiLogManager* getLogManager();
-};
+#if !defined(__OCTANE_MODULE_INFO_DECLARED)
+#define __OCTANE_MODULE_INFO_DECLARED
 struct OctaneModuleInfo {
     const char* name;
     const char* display_name;
     const char* module_id;
     const char* type;
 };
+#endif
+
+/* Forward declare OctaneXModule before full class definition */
+class OctaneXModule;
+
 class ApiProjectManager {
 public:
     virtual ~ApiProjectManager() = default;
@@ -111,6 +103,10 @@ public:
     virtual void saveProject(const char* path);
     virtual void createProject(const char* name);
 };
+
+/* Forward declarations needed before ApiScene */
+class ApiGraph;
+class ApiMaterial;
 
 class ApiRenderEngine {
 public:
@@ -141,7 +137,7 @@ public:
     virtual Vec3 getCameraPosition();
     virtual Vec3 getCameraTarget();
     virtual ApiMaterial* createMaterial(const char* name);
-    virtual int getCurrentOp();
+    virtual int getCurrentOp() const;
 };
 
 class ApiRenderResult {
@@ -180,6 +176,20 @@ public:
     virtual void logMessage(const char* level, const char* msg, const char* module_id);
     virtual void enableDebug(bool on);
 };
+
+class ApiAppCore {
+public:
+    static ApiAppCore* getAppCore();
+    virtual ~ApiAppCore();
+    virtual void* getProjectManager();
+    virtual void* getRenderEngine();
+    virtual void* getScene();
+    ApiLogManager* getCurrentOp();
+    virtual ApiLogManager* getLogManager();
+};
+
+/* OctaneXModule forward declaration — definition in octanex_module.cpp */
+class OctaneXModule;
 
 #endif /* __cplusplus */
 
