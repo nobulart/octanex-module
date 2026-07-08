@@ -9,6 +9,16 @@ Octane X C++ module (octanex.dylib). It provides:
 3. automatic detection of module availability
 4. command queue integration (same queue as existing Lua bridge)
 
+DESIGN INTENT — independent, but composable:
+    This bridge and the C++ module are two SEPARATE components. Each runs and is
+    useful on its own — the bridge can drive Octane X through the file queue with
+    no dylib present, and the dylib can run inside Octane X with no Python bridge.
+    When deployed together they converge on a single `queue/` directory as a
+    common command channel: the bridge writes there as its fallback path, and the
+    module reads/writes the same queue as a sidecar. That shared queue is the only
+    coupling between them, so either can be present or absent without breaking the
+    other. Together they yield a faster/deeper control path than either alone.
+
 Layout:
     module_path  -> the .dylib location
     fallback_path -> the file queue location (if FFI fails)
@@ -42,7 +52,10 @@ MODULE_CANDIDATES = [
     BUNDLE_MODULES / "octanex.dylib",
 ]
 
-# Fallback to file queue (same as existing Lua bridge)
+# Fallback to file queue — THIS IS THE SHARED COMMAND CHANNEL.
+# The queue/ directory is the only coupling between this bridge and the C++
+# octanex module. Either component works alone; together they rendezvous here:
+# the bridge writes as its fallback, the module reads/writes as a sidecar.
 QUEUE_DIR = Path("queue")
 PROCESSING_DIR = Path("processing")
 PROCESSED_DIR = Path("processed")

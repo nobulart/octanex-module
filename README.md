@@ -1,6 +1,22 @@
 # OctaneX Bridge Module
 
-Standalone C++ module for Octane X, built in parallel to the existing Lua-based octanex-mcp system.
+A **standalone C++ module for Octane X**, built in parallel to the existing
+Lua-based `octanex-mcp` system (the Hermes MCP bridge).
+
+## Design intent: independent, but composable
+
+The C++ module and the MCP bridge are **two independent components**:
+
+- Either one runs and is useful **on its own** — the module inside Octane X, the
+  MCP bridge driving Octane over its own channel. Neither requires the other to
+  function.
+- When run **together**, they share a single `queue/` directory as a common
+  command channel. The C++ module can consume that queue as a sidecar, and the
+  MCP bridge falls back to it when the dylib is not loaded. Together they give a
+  faster, deeper control path than either alone.
+
+See `src/octanex_fallback.cpp` and `src/octanex_mcp/bridge.py` for the shared
+queue contract, and the `octanex-module` Hermes skill for the full breakdown.
 
 ## Architecture
 
@@ -38,7 +54,7 @@ octanex/
 - **src/octanex_module.cpp** - Core C++ module implementation (command dispatch, direct node system, event handling)
 - **src/octanex_commands.h** - Command dispatch table and helpers
 - **src/octanex_fallback.cpp** - File-queue fallback implementation
-- **src/octanex.c** - C interface layer (extern "C" bindings for Python FFI and C callers)
+- **src/octanex_ffi.cpp** - C interface layer (extern "C" bindings for Python FFI and C callers)
 - **src/octanex_mcp/bridge.py** - Python FFI bridge (ctypes, queue, availability detection)
 - **test/test_commands.cpp** - C++ tests for all core commands
 - **test/test_module_loading.cpp** - Module loading test

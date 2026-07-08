@@ -1,5 +1,5 @@
 /*
- * octanemoduleapi.h — Forward declarations for the Octane Modules API.
+ * octanemoduleapi.h - Forward declarations for the Octane Modules API.
  *
  * These symbols are resolved at runtime by Octane X.
  * This header is only needed for compile-time type information.
@@ -17,26 +17,18 @@
 #include <stddef.h>
 #else
 #include <stddef.h>
-/* C-compatible forward declarations */
-typedef struct Vec3 Vec3;
-typedef struct Vec4 Vec4;
-typedef struct ApiModule ApiModule;
-typedef struct OctaneCommandModule OctaneCommandModule;
-typedef struct ApiWorkPaneModule ApiWorkPaneModule;
-typedef struct ApiAppCore ApiAppCore;
-typedef struct ApiProjectManager ApiProjectManager;
-typedef struct ApiRenderEngine ApiRenderEngine;
-typedef struct ApiScene ApiScene;
-typedef struct ApiRenderResult ApiRenderResult;
-typedef struct ApiGraph ApiGraph;
-typedef struct OctaneNode OctaneNode;
-typedef struct ApiMaterial ApiMaterial;
-typedef struct ApiLogManager ApiLogManager;
-typedef struct OctaneXModule OctaneXModule;
 #endif
 
 /* --- OTOY API types --- */
 #ifdef __cplusplus
+
+/* Forward declarations used before full class definitions */
+class ApiScene;
+class ApiGraph;
+class ApiMaterial;
+class ApiLogManager;
+class OctaneXModule;
+class ApiModule;
 
 class Vec3 {
 public:
@@ -48,6 +40,13 @@ public:
 class Vec4 {
 public:
     float x{0.0f}, y{0.0f}, z{0.0f}, w{1.0f};
+    Vec4() : x(0.0f), y(0.0f), z(0.0f), w(1.0f) {}
+    Vec4(float _x, float _y, float _z, float _w) : x(_x), y(_y), z(_z), w(_w) {}
+};
+
+class ApiRenderResult {
+public:
+    enum RenderFormat { PNG8 = 0, EXR = 1 };
 };
 
 class ApiModule {
@@ -59,41 +58,6 @@ public:
                                const char* id, ModuleType type);
 };
 
-class OctaneCommandModule : public ApiModule {
-public:
-    virtual void execute() = 0;
-    virtual const char* getName() const = 0;
-    virtual const char* getModuleName() const = 0;
-    virtual void start();
-    virtual void stop();
-protected:
-    const char* getCurrentOp() const;
-    const char* getCurrentPayload() const;
-    void flush_pending_commands() const;
-    void start_internal_thread();
-    void stop_internal_thread();
-};
-
-class ApiWorkPaneModule {
-public:
-    virtual ~ApiWorkPaneModule() = default;
-    virtual const char* getWorkPaneName() const;
-    virtual void createWindow();
-};
-
-/* OctaneXModule forward declaration — definition in octanex_module.cpp */
-class OctaneXModule;
-
-#if !defined(__OCTANE_MODULE_INFO_DECLARED)
-#define __OCTANE_MODULE_INFO_DECLARED
-struct OctaneModuleInfo {
-    const char* name;
-    const char* display_name;
-    const char* module_id;
-    const char* type;
-};
-#endif
-
 class ApiProjectManager {
 public:
     virtual ~ApiProjectManager() = default;
@@ -101,10 +65,6 @@ public:
     virtual void saveProject(const char* path);
     virtual void createProject(const char* name);
 };
-
-/* Forward declarations needed before ApiScene */
-class ApiGraph;
-class ApiMaterial;
 
 class ApiRenderEngine {
 public:
@@ -114,14 +74,14 @@ public:
     virtual void restart();
     virtual void waitForRendering(int samples);
     virtual void setViewport(int width, int height);
-    virtual void saveImage(const char* path, int format);
+    virtual ApiMaterial* saveImage(const char* path, int format);
     virtual Vec3 getCameraPosition();
     virtual void setCameraPosition(const Vec3& pos);
     virtual Vec3 getCameraTarget();
     virtual void setCameraTarget(const Vec3& target);
     virtual float getCameraFov();
     virtual void setCameraFov(float fov);
-    class ApiRenderResult* getRenderResult();
+    virtual ApiRenderResult* getRenderResult();
 };
 
 class ApiScene {
@@ -138,11 +98,6 @@ public:
     virtual int getCurrentOp() const;
 };
 
-class ApiRenderResult {
-public:
-    enum RenderFormat { PNG8 = 0, EXR = 1 };
-};
-
 class ApiGraph {
 public:
     virtual ~ApiGraph() = default;
@@ -150,14 +105,7 @@ public:
     virtual void getMaterials(std::vector<std::string>* out) const;
     virtual int loadFile(const char* path);
     virtual int assignMaterial(const char* object_name, const char* material_name);
-    class OctaneNode* getNodeByName(const char* name);
-};
-
-class OctaneNode {
-public:
-    virtual ~OctaneNode() = default;
-    virtual void setProperty(const char* name, float value);
-    virtual float getProperty(const char* name) const;
+    virtual ApiGraph* getNodeByName(const char* name);
 };
 
 class ApiMaterial {
@@ -186,24 +134,87 @@ public:
     virtual ApiLogManager* getLogManager();
 };
 
-/* OctaneXModule forward declaration — definition in octanex_module.cpp */
-class OctaneXModule;
+class ApiWorkPaneModule {
+public:
+    virtual ~ApiWorkPaneModule() = default;
+    virtual const char* getWorkPaneName();
+    virtual void createWindow();
+};
 
-#endif /* __cplusplus */
+class OctaneCommandModule {
+public:
+    virtual void execute() = 0;
+    virtual const char* getName() const = 0;
+    virtual const char* getModuleName() const = 0;
+    virtual void start();
+    virtual void stop();
+protected:
+    const char* getCurrentOp() const;
+    const char* getCurrentPayload() const;
+    void flush_pending_commands() const;
+    void start_internal_thread();
+    void stop_internal_thread();
+    virtual const char* getModuleDirectory() const;
+};
 
 /*
- * Runtime functions — resolved by Octane at load time.
+ * Module info struct - used by Octane's module loader.
+ * Members are compatible with both C and C++.
+ */
+struct OctaneModuleInfo {
+    const char* name;
+    const char* display_name;
+    const char* module_id;
+    int type;
+    void (*start)(void);
+    void (*stop)(void);
+    void (*execute)(void);
+};
+
+/*
+ * Runtime functions - resolved by Octane at load time.
  */
 #ifdef __cplusplus
 extern "C" {
 #endif
-
 const char* getModuleDirectory();
 const char* getNextObjName();
 const char* getCurrentOp();
-
+extern OctaneModuleInfo getModuleInfo(void);
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
+
+#else /* !__cplusplus -- C-only mode */
+
+/* Minimal C definitions */
+typedef struct OctaneModuleInfo {
+    const char* name;
+    const char* display_name;
+    const char* module_id;
+    int type;
+    void (*start)(void);
+    void (*stop)(void);
+    void (*execute)(void);
+} OctaneModuleInfo;
+
+typedef void* ApiModuleInfo;
+typedef void* ApiLogManager;
+typedef void* ApiProjectManager;
+typedef void* ApiRenderEngine;
+typedef void* ApiScene;
+typedef void* ApiGraph;
+typedef void* ApiMaterial;
+typedef void* ApiWorkPaneModule;
+
+typedef struct { float x, y, z; } Vec3;
+
+typedef struct {
+    void* (*getAppCore)(void);
+    void* (*getProjectManager)(void);
+    void* (*getRenderEngine)(void);
+} ApiAppCore;
+
+#endif /* __cplusplus */
 
 #endif /* OCTANE_MODULE_API_H */

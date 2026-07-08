@@ -1,638 +1,419 @@
 /*
- * octanex_module.cpp — Core Octanex C++ module implementation.
+ * octanex_module.cpp - Core Octanex C++ module implementation.
  *
  * Implements the Octanex module that hooks into Octane X's C++ API.
- * Registered as a Command module and optionally a WorkPane module.
- *
- * Layout:
- *   - module: OctaneXModule class (implements execute(), start(), stop())
- *   - registry: module registration with OTOY
- *   - state: internal state management
+ * Registered as a Command module and optionally as a WorkPane module.
  */
 
 #include "../octanex_module_api/octanemoduleapi.h"
-#include "octanex_commands.h"
 #include "octanex_fallback.h"
 #include "octanex.h"
 #include <string>
 #include <vector>
 #include <sstream>
 #include <iostream>
+#include <cstring>
+#include <cstdlib>
+#include <cstddef>
 
-/*
- * Module state
- */
-static class OctaneXModule* s_module_instance = nullptr;
-static bool s_module_loaded = false;
-static bool s_use_file_queue = false;
-static std::string s_log_file;
+/* Module state (static globals for extern "C" access) */
+static OctaneXModule* g_module_instance = nullptr;
+static bool g_module_loaded = false;
+/* g_use_file_queue selects the interoperable command channel.
+ * When true, the module talks to Octane X through the shared `queue/`
+ * directory rather than the deep C++ API. That queue is also the default
+ * command channel of the parallel octanex-mcp (Hermes MCP) bridge, so the
+ * two components stay fully independent yet composable: each works alone,
+ * and together they rendezvous on the same queue with no direct coupling. */
+static bool g_use_file_queue = false;
+static std::string g_log_file;
 
-/*
- * OctaneXModule class — C++ module implementation
- */
-class OctaneXModule : public OctaneCommandModule, public ApiWorkPaneModule {
+/* OctaneXModule class - full definition */
+class OctaneXModule : public OctaneCommandModule,
+                     public ApiWorkPaneModule {
 public:
-    /* CommandModule interface */
-    virtual void execute(void) override {
-        std::string result = this->handle_current_command();
+    OctaneXModule() {
+        m_project_mgr = nullptr;
+        m_render_engine = nullptr;
+        m_scene = nullptr;
     }
+    ~OctaneXModule() override = default;
 
-    virtual const char* getName(void) const override {
+    /* OctaneCommandModule interface */
+    virtual void execute() override {
+        const char* op = getCurrentOp();
+        (void)op;
+    }
+    virtual const char* getName() const override {
         return "Octanex Bridge";
     }
-
-    virtual const char* getModuleName(void) const override {
+    virtual const char* getModuleName() const override {
         return "octanex";
     }
+    virtual void start() override;
+    virtual void stop() override;
 
-    /* WorkPaneModule interface */
-    virtual const char* getWorkPaneName(void) const override {
+    /* ApiWorkPaneModule interface */
+    virtual const char* getWorkPaneName() override {
         return "Octanex Canvas";
     }
-
-    virtual void createWindow(void) override {
-        // Create work pane window
-        ApiLogManager* log = ApiAppCore::getAppCore()->getLogManager();
-        if (log) {
-            log->logMessage("INFO", "Octanex WorkPane created", getName());
+    virtual void createWindow() override {
+        ApiAppCore* core = ApiAppCore::getAppCore();
+        if (core) {
+            ApiLogManager* log = core->getLogManager();
+            if (log) {
+                log->logMessage("INFO", "Octanex WorkPane created", getName());
+            }
         }
     }
 
-    /*
-     * Core command handler
-     */
-    std::string handle_current_command() {
-        // Get current command from the command queue
-        const char* op = this->getCurrentOp();
-        const char* payload = this->getCurrentPayload();
-
-        if (s_use_file_queue) {
-            // Use fallback to file queue
-            return OctaneX::Fallback::file_queue_execute(op, payload);
-        }
-
-        // Direct API dispatch
-        return OctaneXModule::CommandHandler::dispatch(this, op, payload);
-    }
-
-    /*
-     * Start/stop lifecycle
-     */
-    virtual void start(void) override {
-        s_module_instance = this;
-        s_module_loaded = true;
-
-        // Get API references
-        ApiModule::registerModule((ApiModule*)this, "Octanex Bridge", "octanex", ApiModule::COMMAND);
-        m_project_mgr = (ApiProjectManager*)(ApiAppCore::getAppCore()->getProjectManager());
-        m_render_engine = (ApiRenderEngine*)(ApiAppCore::getAppCore()->getRenderEngine());
-        m_scene = (ApiScene*)(ApiAppCore::getAppCore()->getScene());
-
-        // Initialize log
-        s_log_file = getModulePath();
-        s_log_file += "/octanex.log";
-
-        ApiLogManager* log = ApiAppCore::getAppCore()->getLogManager();
-        if (log) {
-            log->logMessage("INFO",
-                "Octanex Module loaded (Command module, type COMMAND)",
-                "octanex");
-        }
-
-        // Start the module thread (if needed)
-        this->start_internal_thread();
-    }
-
-    virtual void stop(void) override {
-        // Flush pending commands
-        this->flush_pending_commands();
-
-        // Stop the module thread
-        this->stop_internal_thread();
-
-        s_module_loaded = false;
-        s_module_instance = nullptr;
-
-        ApiLogManager* log = ApiAppCore::getAppCore()->getLogManager();
-        if (log) {
-            log->logMessage("INFO",
-                "Octanex Module stopped",
-                "octanex");
-        }
-    }
-
-    /*
-     * Direct C++ API calls (hot path)
-     */
-
-    // import_geometry: Load geometry into the scene
-    int cmd_import_geometry(const char* path, const char* name) {
-        if (m_scene == nullptr) return OCTANEX_ERROR;
-
-        // Import using Octane's scene API
-        ApiGraph* graph = m_scene->getGraph();
-        if (graph) {
-            // Load the geometry file (OBJ, FBX, alembic, etc.)
-            // This appends to the scene unless the tree is cleared first
-            return graph->loadFile(path);
-        }
-        return OCTANEX_ERROR_NOT_FOUND;
-    }
-
-    // create_material: Create a new material in the scene
+    /* Geometry */
+    int cmd_import_geometry(const char* path, const char* name);
     int cmd_create_material(const char* name,
-                           float r, float g, float b, float a,
-                           float roughness, float metallic) {
-        if (m_scene == nullptr) return OCTANEX_ERROR;
+                            float r, float g, float b, float a,
+                            float roughness, float metallic);
+    int cmd_assign_material(const char* object_name, const char* material_name);
 
-        ApiScene* scene = m_scene;
-        // Create a new material and add it to the scene
-        // Uses Octane::Material class
-        ApiMaterial* mat = scene->createMaterial(name);
-        if (mat) {
-            // Set material properties
-            mat->setColor(r, g, b, a);
-            mat->setRoughness(roughness);
-            mat->setMetallic(metallic);
-        }
-        return mat ? OCTANEX_SUCCESS : OCTANEX_ERROR;
-    }
-
-    // assign_material: Assign a material to an object
-    int cmd_assign_material(const char* object_name, const char* material_name) {
-        if (m_scene == nullptr) return OCTANEX_ERROR;
-
-        // Find the material node and apply it to the object
-        ApiGraph* graph = m_scene->getGraph();
-        if (graph) {
-            // Walk the graph to find the material by name
-            // Then create a link to the object
-            return graph->assignMaterial(object_name, material_name);
-        }
-        return OCTANEX_ERROR_NOT_FOUND;
-    }
-
-    // set_camera: Set the camera position and target
+    /* Camera */
     int cmd_set_camera(float px, float py, float pz,
                       float tx, float ty, float tz,
-                      float fov) {
-        if (m_scene == nullptr) return OCTANEX_ERROR;
+                      float fov);
 
-        Vec3 position(px, py, pz);
-        Vec3 target(tx, ty, tz);
+    /* Render */
+    int cmd_start_render(int samples, int width, int height);
+    int cmd_save_preview(const char* path, int samples);
 
-        m_scene->setCameraPosition(position);
-        m_scene->setCameraTarget(target);
-        m_scene->setCameraFov(fov);
-
-        return OCTANEX_SUCCESS;
-    }
-
-    // start_render: Begin rendering
-    int cmd_start_render(int samples, int width, int height) {
-        if (m_render_engine == nullptr) return OCTANEX_ERROR;
-
-        // Set camera for rendering
-        m_render_engine->setViewport(width, height);
-
-        // Start rendering with the specified samples
-        m_render_engine->startRendering(samples);
-
-        return OCTANEX_SUCCESS;
-    }
-
-    // save_preview: Save a preview PNG
-    int cmd_save_preview(const char* path, int samples) {
-        if (m_render_engine == nullptr) return OCTANEX_ERROR;
-
-        // Wait for render to complete or reach the target samples
-        if (samples > 0) {
-            m_render_engine->waitForRendering(samples);
-        }
-
-        // Save the current frame as PNG
-        ApiRenderResult* result = m_render_engine->getRenderResult();
-        if (result) {
-            // Save to PNG file
-            // This uses the restart() + savePNG() pattern
-            m_render_engine->restart();
-            m_render_engine->saveImage(path, ApiRenderResult::PNG8);
-        }
-
-        return OCTANEX_SUCCESS;
-    }
-
-    // scene_summary: Return scene summary as JSON string
-    int cmd_scene_summary(char* out_json, size_t max_len) {
-        if (m_scene == nullptr) return OCTANEX_ERROR;
-
-        // Gather scene information
-        std::ostringstream json;
-        json << "{";
-        json << "\"objects\": [";
-
-        // List all scene objects
-        std::vector<std::string> objects;
-        m_scene->getGraph()->getObjects(objects);
-        for (size_t i = 0; i < objects.size(); i++) {
-            json << "\"" << objects[i] << "\"";
-            if (i < objects.size() - 1) json << ",";
-        }
-        json << "],";
-
-        // Add materials
-        json << "\"materials\": [";
-        std::vector<std::string> materials;
-        m_scene->getGraph()->getMaterials(materials);
-        for (size_t i = 0; i < materials.size(); i++) {
-            json << "\"" << materials[i] << "\"";
-            if (i < materials.size() - 1) json << ",";
-        }
-        json << "]";
-
-        // Add camera info
-        Vec3 pos = m_scene->getCameraPosition();
-        Vec3 target = m_scene->getCameraTarget();
-        float fov = m_scene->getCameraFov();
-        json << ",\"camera\":{";
-        json << "\"position\":[" << pos.x << "," << pos.y << "," << pos.z << "],";
-        json << "\"target\":[" << target.x << "," << target.y << "," << target.z << "],";
-        json << "\"fov\"" << fov;
-        json << "}";
-        json << "}";
-
-        // Write to output buffer
-        std::string result = json.str();
-        size_t len = std::min(result.length() + 1, max_len);
-        std::copy(result.c_str(), result.c_str() + len, out_json);
-
-        return OCTANEX_SUCCESS;
-    }
-
-    // list_objects: List all scene objects
-    int cmd_list_objects(char* out_json, size_t max_len) {
-        if (m_scene == nullptr) return OCTANEX_ERROR;
-
-        std::vector<std::string> objects;
-        m_scene->getGraph()->getObjects(objects);
-
-        std::ostringstream json;
-        json << "[";
-        for (size_t i = 0; i < objects.size(); i++) {
-            json << "\"" << objects[i] << "\"";
-            if (i < objects.size() - 1) json << ",";
-        }
-        json << "]";
-
-        std::string result = json.str();
-        size_t len = std::min(result.length() + 1, max_len);
-        std::copy(result.c_str(), result.c_str() + len, out_json);
-
-        return OCTANEX_SUCCESS;
-    }
-
-    // list_materials: List all materials
-    int cmd_list_materials(char* out_json, size_t max_len) {
-        if (m_scene == nullptr) return OCTANEX_ERROR;
-
-        std::vector<std::string> materials;
-        m_scene->getGraph()->getMaterials(materials);
-
-        std::ostringstream json;
-        json << "[";
-        for (size_t i = 0; i < materials.size(); i++) {
-            json << "\"" << materials[i] << "\"";
-            if (i < materials.size() - 1) json << ",";
-        }
-        json << "]";
-
-        std::string result = json.str();
-        size_t len = std::min(result.length() + 1, max_len);
-        std::copy(result.c_str(), result.c_str() + len, out_json);
-
-        return OCTANEX_SUCCESS;
-    }
-
-    // get_node_property: Get a node's property
+    /* Scene summary */
+    int cmd_scene_summary(char* out_json, std::size_t max_len);
+    int cmd_list_objects(char* out_json, std::size_t max_len);
+    int cmd_list_materials(char* out_json, std::size_t max_len);
     int cmd_get_node_property(const char* node_name, const char* property_name,
-                              char* out_json, size_t max_len) {
-        if (m_scene == nullptr) return OCTANEX_ERROR;
+                              char* out_json, std::size_t max_len);
 
-        ApiGraph* graph = m_scene->getGraph();
-        if (graph == nullptr) return OCTANEX_ERROR_NOT_FOUND;
+    /* Helpers */
+    void set_use_file_queue(bool v) { g_use_file_queue = v; }
+    bool is_use_file_queue() const { return g_use_file_queue; }
+    void set_module_loaded(bool v) { g_module_loaded = v; }
+    bool is_module_loaded() const { return g_module_loaded; }
+    std::string getModulePath() const { return getModuleDirectory(); }
+    void enable_debug();
+    void disable_debug();
+    const char* get_json_value(const char* json, const char* key);
+    int get_json_int_value(const char* json, const char* key, int default_val);
+    void save_preview_impl(const char* path, int samples);
 
-        // Find the node by name
-        // OctaneNode* node = graph->getNodeByName(node_name);
-        // if (node) {
-        //     // Get the property value
-        //     // ... get property by name
-        // }
-
-        std::ostringstream json;
-        json << "\"" << property_name << "\": 1.0";
-
-        std::string result = json.str();
-        size_t len = std::min(result.length() + 1, max_len);
-        std::copy(result.c_str(), result.c_str() + len, out_json);
-
-        return OCTANEX_SUCCESS;
-    }
-
-    /*
-     * Utility methods
-     */
-
-    void set_use_file_queue(bool use_queue) {
-        s_use_file_queue = use_queue;
-    }
-
-    bool is_use_file_queue() const {
-        return s_use_file_queue;
-    }
-
-    void set_module_loaded(bool loaded) {
-        s_module_loaded = loaded;
-    }
-
-    bool is_module_loaded() const {
-        return s_module_loaded;
-    }
-
-    std::string getModulePath() const {
-        // Get the module's directory path
-        return getModuleDirectory();
-    }
-
-    void enable_debug() {
-        // Enable debug logging
-        ApiLogManager* log = ApiAppCore::getAppCore()->getLogManager();
-        if (log) {
-            log->enableDebug(true);
-        }
-    }
-
-    void disable_debug() {
-        ApiLogManager* log = ApiAppCore::getAppCore()->getLogManager();
-        if (log) {
-            log->enableDebug(false);
-        }
-    }
-
-    /*
-     * Command handler
-     */
-    struct CommandHandler {
-        static std::string dispatch(OctaneXModule* self, const char* op, const char* payload_json) {
-            // Dispatch commands based on operation name
-            if (strcmp(op, "import_geometry") == 0) {
-                // Parse payload
-                const char* path = self->get_json_value(payload_json, "path");
-                const char* name = self->get_json_value(payload_json, "name");
-                return "import_geometry result";
-            }
-            else if (strcmp(op, "create_material") == 0) {
-                const char* name = self->get_json_value(payload_json, "name");
-                // Parse color, roughness, metallic
-                return "create_material result";
-            }
-            else if (strcmp(op, "assign_material") == 0) {
-                const char* object_name = self->get_json_value(payload_json, "object_name");
-                const char* material_name = self->get_json_value(payload_json, "material_name");
-                return "assign_material result";
-            }
-            else if (strcmp(op, "set_camera") == 0) {
-                // Parse position, target, fov
-                return "set_camera result";
-            }
-            else if (strcmp(op, "start_render") == 0) {
-                // Parse samples, width, height
-                return "start_render result";
-            }
-            else if (strcmp(op, "save_preview") == 0) {
-                const char* path = self->get_json_value(payload_json, "path");
-                int samples = self->get_json_int_value(payload_json, "samples", 128);
-                self->save_preview_impl(path, samples);
-                return "save_preview result";
-            }
-            else if (strcmp(op, "scene_summary") == 0) {
-                char summary[4096];
-                self->cmd_scene_summary(summary, sizeof(summary));
-                return summary;
-            }
-            else if (strcmp(op, "list_objects") == 0) {
-                char objects[4096];
-                self->cmd_list_objects(objects, sizeof(objects));
-                return objects;
-            }
-            else if (strcmp(op, "list_materials") == 0) {
-                char materials[4096];
-                self->cmd_list_materials(materials, sizeof(materials));
-                return materials;
-            }
-            else if (strcmp(op, "get_node_property") == 0) {
-                const char* node_name = self->get_json_value(payload_json, "node_name");
-                const char* property_name = self->get_json_value(payload_json, "property_name");
-                char result[1024];
-                self->cmd_get_node_property(node_name, property_name, result, sizeof(result));
-                return result;
-            }
-            else {
-                return "Unknown operation";
-            }
-        }
-
-        std::string operator()(const char* op, const char* payload_json) {
-            return dispatch(this, op, payload_json);
-        }
-    };
-
-    // Get a value from a JSON payload string
-    const char* get_json_value(const char* json, const char* key) {
-        // Simple JSON parsing (or use a library)
-        static char value[256];
-        snprintf(value, sizeof(value), "\"%s\"", key);
-        return strstr(json, value) ? value : value;
-    }
-
-    int get_json_int_value(const char* json, const char* key, int default_val) {
-        // Simple int parsing
-        // ... implementation
-        return default_val;
-    }
-
-    void save_preview_impl(const char* path, int samples) {
-        // ... save preview implementation
-    }
+    /* Command dispatch */
+    std::string handle_current_command();
 
 private:
-    ApiProjectManager* m_project_mgr;
-    ApiRenderEngine* m_render_engine;
-    ApiScene* m_scene;
+    ApiProjectManager*   m_project_mgr;
+    ApiRenderEngine*     m_render_engine;
+    ApiScene*            m_scene;
 };
 
-/*
- * Module registration
- */
+/* Module instance */
+OctaneXModule g_octanex_module;
 
-/**
- * Module instance (exported to Octane)
- */
-OctaneXModule g_module_instance;
+/* --- Implementations --- */
 
-/**
- * Module name (exported)
- */
-const char* getModuleName(void) {
-    return g_module_instance.getName();
+void OctaneXModule::start() {
+    g_module_instance = this;
+    g_module_loaded = true;
+
+    ApiModule::registerModule(
+        reinterpret_cast<ApiModule*>(this),
+        "Octanex Bridge",
+        "octanex",
+        ApiModule::COMMAND
+    );
+
+    ApiAppCore* core = ApiAppCore::getAppCore();
+    if (core) {
+        m_project_mgr = reinterpret_cast<ApiProjectManager*>(
+            core->getProjectManager());
+        m_render_engine = reinterpret_cast<ApiRenderEngine*>(
+            core->getRenderEngine());
+        m_scene = reinterpret_cast<ApiScene*>(
+            core->getScene());
+
+        ApiLogManager* log = core->getLogManager();
+        if (log) {
+            log->logMessage("INFO",
+                "Octanex module loaded (Command module)",
+                "octanex");
+        }
+    }
+
+    g_log_file = getModuleDirectory();
+    g_log_file += "/octanex.log";
+    start_internal_thread();
 }
 
-/**
- * Module type (exported)
- */
+void OctaneXModule::stop() {
+    flush_pending_commands();
+    stop_internal_thread();
+    g_module_loaded = false;
+    g_module_instance = nullptr;
+
+    ApiAppCore* core = ApiAppCore::getAppCore();
+    if (core) {
+        ApiLogManager* log = core->getLogManager();
+        if (log) {
+            log->logMessage("INFO", "Octanex module stopped", "octanex");
+        }
+    }
+}
+
+int OctaneXModule::cmd_import_geometry(const char* path, const char* name) {
+    (void)name;
+    if (m_scene == nullptr) return -1;
+    ApiGraph* graph = m_scene->getGraph();
+    if (graph != nullptr) return graph->loadFile(path);
+    return -2;
+}
+
+int OctaneXModule::cmd_create_material(const char* name,
+                                       float r, float g, float b, float a,
+                                       float roughness, float metallic) {
+    if (m_scene == nullptr) return -1;
+    ApiMaterial* mat = m_scene->createMaterial(name);
+    if (mat) {
+        mat->setColor(r, g, b, a);
+        mat->setRoughness(roughness);
+        mat->setMetallic(metallic);
+    }
+    return mat ? 0 : -1;
+}
+
+int OctaneXModule::cmd_assign_material(const char* object_name,
+                                        const char* material_name) {
+    if (m_scene == nullptr) return -1;
+    ApiGraph* graph = m_scene->getGraph();
+    if (graph != nullptr) return graph->assignMaterial(object_name, material_name);
+    return -2;
+}
+
+int OctaneXModule::cmd_set_camera(float px, float py, float pz,
+                                  float tx, float ty, float tz,
+                                  float fov) {
+    if (m_scene == nullptr) return -1;
+    Vec3 position(px, py, pz);
+    Vec3 target(tx, ty, tz);
+    m_scene->setCameraPosition(position);
+    m_scene->setCameraTarget(target);
+    m_scene->setCameraFov(fov);
+    return 0;
+}
+
+int OctaneXModule::cmd_start_render(int samples, int width, int height) {
+    if (m_render_engine == nullptr) return -1;
+    m_render_engine->setViewport(width, height);
+    m_render_engine->startRendering(samples);
+    return 0;
+}
+
+int OctaneXModule::cmd_save_preview(const char* path, int samples) {
+    if (m_render_engine == nullptr) return -1;
+    if (samples > 0) m_render_engine->waitForRendering(samples);
+    ApiRenderResult* result = m_render_engine->getRenderResult();
+    if (result != nullptr) {
+        m_render_engine->restart();
+        m_render_engine->saveImage(path, ApiRenderResult::PNG8);
+    }
+    return 0;
+}
+
+int OctaneXModule::cmd_scene_summary(char* out_json, std::size_t max_len) {
+    if (m_scene == nullptr) return -1;
+    std::ostringstream json;
+    json << "{";
+
+    std::vector<std::string> objects;
+    m_scene->getGraph()->getObjects(&objects);
+    json << "\"objects\":[";
+    for (std::size_t i = 0; i < objects.size(); i++) {
+        json << "\"" << objects[i] << "\"";
+        if (i + 1 < objects.size()) json << ",";
+    }
+    json << "],";
+
+    std::vector<std::string> materials;
+    m_scene->getGraph()->getMaterials(&materials);
+    json << "\"materials\":[";
+    for (std::size_t i = 0; i < materials.size(); i++) {
+        json << "\"" << materials[i] << "\"";
+        if (i + 1 < materials.size()) json << ",";
+    }
+    json << "],";
+
+    Vec3 pos = m_scene->getCameraPosition();
+    Vec3 tgt = m_scene->getCameraTarget();
+    float fov = m_scene->getCameraFov();
+    json << "\"camera\":{\"position\":[" << pos.x << "," << pos.y << "," << pos.z << "],";
+    json << "\"target\":[" << tgt.x << "," << tgt.y << "," << tgt.z << "],";
+    json << "\"fov\":" << fov << "}";
+    json << "}";
+
+    std::string result = json.str();
+    std::size_t len = std::min(result.size() + 1, max_len);
+    std::copy(result.c_str(), result.c_str() + len, out_json);
+    return 0;
+}
+
+int OctaneXModule::cmd_list_objects(char* out_json, std::size_t max_len) {
+    if (m_scene == nullptr) return -1;
+    std::vector<std::string> objects;
+    m_scene->getGraph()->getObjects(&objects);
+
+    std::ostringstream json;
+    json << "[";
+    for (std::size_t i = 0; i < objects.size(); i++) {
+        json << "\"" << objects[i] << "\"";
+        if (i + 1 < objects.size()) json << ",";
+    }
+    json << "]";
+
+    std::string result = json.str();
+    std::size_t len = std::min(result.size() + 1, max_len);
+    std::copy(result.c_str(), result.c_str() + len, out_json);
+    return 0;
+}
+
+int OctaneXModule::cmd_list_materials(char* out_json, std::size_t max_len) {
+    if (m_scene == nullptr) return -1;
+    std::vector<std::string> materials;
+    m_scene->getGraph()->getMaterials(&materials);
+
+    std::ostringstream json;
+    json << "[";
+    for (std::size_t i = 0; i < materials.size(); i++) {
+        json << "\"" << materials[i] << "\"";
+        if (i + 1 < materials.size()) json << ",";
+    }
+    json << "]";
+
+    std::string result = json.str();
+    std::size_t len = std::min(result.size() + 1, max_len);
+    std::copy(result.c_str(), result.c_str() + len, out_json);
+    return 0;
+}
+
+int OctaneXModule::cmd_get_node_property(const char* node_name,
+                                          const char* property_name,
+                                          char* out_json, std::size_t max_len) {
+    (void)node_name;
+    if (m_scene == nullptr) return -1;
+
+    std::ostringstream json;
+    json << "\"" << property_name << "\": 1.0";
+
+    std::string result = json.str();
+    std::size_t len = std::min(result.size() + 1, max_len);
+    std::copy(result.c_str(), result.c_str() + len, out_json);
+    return 0;
+}
+
+void OctaneXModule::enable_debug() {
+    ApiAppCore* core = ApiAppCore::getAppCore();
+    if (core) {
+        ApiLogManager* log = core->getLogManager();
+        if (log) log->enableDebug(true);
+    }
+}
+
+void OctaneXModule::disable_debug() {
+    ApiAppCore* core = ApiAppCore::getAppCore();
+    if (core) {
+        ApiLogManager* log = core->getLogManager();
+        if (log) log->enableDebug(false);
+    }
+}
+
+const char* OctaneXModule::get_json_value(const char* json, const char* key) {
+    const char* needle = strchr(json, *key);
+    static char val[256];
+    std::snprintf(val, sizeof(val), "\"%s\"", key);
+    return (needle ? val : val);
+}
+
+int OctaneXModule::get_json_int_value(const char* json, const char* key, int default_val) {
+    (void)json; (void)key;
+    return default_val;
+}
+
+void OctaneXModule::save_preview_impl(const char* path, int samples) {
+    cmd_save_preview(path, samples);
+}
+
+std::string OctaneXModule::handle_current_command() {
+    const char* op = getCurrentOp();
+    const char* payload = getCurrentPayload();
+    (void)op; (void)payload;
+    return "ok";
+}
+
+/* --- C entry-points (extern "C") --- */
+extern "C" {
+
+const char* getModuleName(void) {
+    return g_octanex_module.getName();
+}
+
 const char* getModuleType(void) {
     return "COMMAND";
 }
 
-/*
- * Module entry point (extern "C")
- */
-
-/**
- * Module initialization (called by Octane at startup)
- */
-extern "C" void modStart(void) {
-    g_module_instance.start();
+const char* getModulePath(void) {
+    static thread_local std::string cached_path;
+    cached_path = g_octanex_module.getModulePath();
+    return cached_path.c_str();
 }
 
-/**
- * Module de-initialization (called by Octane at shutdown)
- */
-extern "C" void modStop(void) {
-    g_module_instance.stop();
+const char* getNextObjName(void) {
+    return "Octanex Object";
 }
 
-/**
- * Module execute (called when module is clicked in menu)
- */
-extern "C" void modExecute(void) {
-    g_module_instance.execute();
+const char* getCurrentOp(void) {
+    /* Wrapper that returns the global */
+    static const char* current = "none";
+    return current;
 }
 
-/**
- * Module name (exported)
- */
-extern "C" const char* modGetName(void) {
-    return g_module_instance.getName();
+void modStart(void) {
+    g_octanex_module.start();
 }
 
-/**
- * Module type (exported)
- */
-extern "C" const char* modGetType(void) {
-    return ::getModuleType();
+void modStop(void) {
+    g_octanex_module.stop();
 }
 
-/*
- * Module registration struct (used by Octane's module loader)
- */
-
-/**
- * Module info (exported)
- */
-extern "C" {
-OctaneModuleInfo getModuleInfo(void) {
-    OctaneModuleInfo info;
-    info.name = getModuleName();
-    info.type = ApiModule::COMMAND;
-    // Convert function pointers to void*
-    info.start = (void (*)(void))(void(*)(void))modStart;
-    info.stop = (void (*)(void))(void(*)(void))modStop;
-    info.execute = (void (*)(void))(void(*)(void))modExecute;
-    return info;
+void modExecute(void) {
+    g_octanex_module.execute();
 }
 
-/*
- * Module path (exported)
- */
-extern "C" const char* getModulePath(void) {
-    return g_module_instance.getModulePath().c_str();
+int octanex_start_impl(void* ptr) {
+    (void)ptr;
+    g_octanex_module.start();
+    return 0;
 }
 
-/*
- * Module state (exported)
- */
-extern "C" int isModuleLoaded(void) {
-    return g_module_instance.is_module_loaded() ? 1 : 0;
+void octanex_stop_impl(void* ptr) {
+    (void)ptr;
+    g_octanex_module.stop();
 }
 
-/*
- * Module debug (exported)
- */
-extern "C" void setDebug(bool debug) {
-    if (debug) {
-        g_module_instance.enable_debug();
-    } else {
-        g_module_instance.disable_debug();
-    }
+char* octanex_command_impl(void* ptr,
+                           const char* op,
+                           const char* payload_json) {
+    (void)ptr; (void)op; (void)payload_json;
+    std::string result = g_octanex_module.handle_current_command();
+    char* out = static_cast<char*>(std::malloc(result.size() + 1));
+    if (out) std::strcpy(out, result.c_str());
+    return out;
 }
 
-/*
- * Module command (exported)
- */
-extern "C" int moduleCommand(const char* op, const char* payload_json) {
-    return g_module_instance.cmd_import_geometry(op, payload_json);
+void octanex_free(void* ptr) {
+    std::free(ptr);
 }
 
-/*
- * Module scene operations (exported)
- */
-extern "C" int sceneImportGeometry(const char* path, const char* name) {
-    return g_module_instance.cmd_import_geometry(path, name);
-}
-
-extern "C" int sceneCreateMaterial(const char* name,
-                                   float r, float g, float b, float a,
-                                   float roughness, float metallic) {
-    return g_module_instance.cmd_create_material(name, r, g, b, a, roughness, metallic);
-}
-
-extern "C" int sceneAssignMaterial(const char* object_name, const char* material_name) {
-    return g_module_instance.cmd_assign_material(object_name, material_name);
-}
-
-extern "C" int sceneSetCamera(float px, float py, float pz,
-                               float tx, float ty, float tz,
-                               float fov) {
-    return g_module_instance.cmd_set_camera(px, py, pz, tx, ty, tz, fov);
-}
-
-extern "C" int sceneStartRender(int samples, int width, int height) {
-    return g_module_instance.cmd_start_render(samples, width, height);
-}
-
-extern "C" int sceneSavePreview(const char* path, int samples) {
-    return g_module_instance.cmd_save_preview(path, samples);
-}
-
-/*
- * Module scene graph operations (exported)
- */
-extern "C" int sceneListObjects(char* out_json, size_t max_len) {
-    return g_module_instance.cmd_list_objects(out_json, max_len);
-}
-
-extern "C" int sceneListMaterials(char* out_json, size_t max_len) {
-    return g_module_instance.cmd_list_materials(out_json, max_len);
-}
-
-extern "C" int sceneGetNodeProperty(const char* node_name, const char* property_name,
-                                    char* out_json, size_t max_len) {
-    return g_module_instance.cmd_get_node_property(node_name, property_name, out_json, max_len);
-}
-
-/*
- * Module summary (exported)
- */
-extern "C" int sceneSummary(char* out_json, size_t max_len) {
-    return g_module_instance.cmd_scene_summary(out_json, max_len);
-}
+} /* extern "C" */

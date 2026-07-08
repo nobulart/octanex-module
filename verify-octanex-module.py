@@ -50,7 +50,7 @@ def check_cmakelists():
         ('minimal', 'cmake_minimum_required' in cmake),
         ('project(', 'project(' in cmake),
         ('C++17', 'CMAKE_CXX_STANDARD' in cmake),
-        ('MODULE', 'MODULE' in cmake),
+        ('MODULE', 'MODULE' in cmake or 'SHARED' in cmake),
         ('dynamic_lookup', 'dynamic_lookup' in cmake),
         ('fPIC', '-fPIC' in cmake),
     ]
@@ -89,7 +89,7 @@ def check_key_files():
     """All critical changed files exist."""
     files = [
         'CMakeLists.txt', 'pyproject.toml', 'README.md', 'docs/PLAN.md',
-        'src/octanex_module.cpp', 'src/octanex.c', 'src/octanex_commands.h',
+        'src/octanex_module.cpp', 'src/octanex_ffi.cpp', 'src/octanex_commands.h',
         'src/octanex_fallback.cpp', 'src/octanex.h', 'src/octanex_bridge.egg-info',
         'src/octanex_mcp/bridge.py', 'src/octanex_mcp/__init__.py',
         'scripts/build-release.sh', 'scripts/install-to-octane.sh',

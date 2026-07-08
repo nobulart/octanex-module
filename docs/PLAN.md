@@ -36,7 +36,7 @@ octanex-module/                        ← new module (forked, parallel)
 │   ├── octanemoduleapi.h              ← convenience single-include
 │   └── octanemoduleapi.cpp
 ├── src/
-│   ├── octanex.c                      ← extern "C" bridge functions (entry points)
+│   ├── octanex_ffi.cpp                ← extern "C" bridge functions (entry points)
 │   ├── octanex_module.cpp             ← core module implementation
 │   ├── octanex_commands.h             ← command dispatch table
 │   └── octanex_fallback.cpp           ← Lua bridge fallback (file-based)
@@ -60,17 +60,23 @@ octanex-module/                        ← new module (forked, parallel)
    - Falls back to the file-based queue for the same commands.
 
 2. **Dual ABI** — `octanex_module.cpp` uses OTOY's `octanewrap` wrappers
-   (C++ API). `octanex.c` exposes `extern "C"` functions for any Python FFI
+   (C++ API). `octanex_ffi.cpp` exposes `extern "C"` functions for any Python FFI
    caller to use if needed later.
 
-3. **Module ID** — Request `octanex` as a unique module ID from OTOY.
+3. **Independent but composable** — the module and the `octanex-mcp`
+   (Hermes MCP) bridge are separate components with no shared code. Each runs
+   alone; when both are deployed they rendezvous on the shared `queue/`
+   directory (see `octanex_fallback.cpp` / `bridge.py`). The queue is the only
+   coupling, so either can be present or absent without breaking the other.
+
+4. **Module ID** — Request `octanex` as a unique module ID from OTOY.
    Until assigned, use `0xFFFFFFFF` (auto-assigned) or a placeholder.
 
-4. **Command dispatch** — The module receives commands via:
+5. **Command dispatch** — The module receives commands via:
    - Direct API calls (for module-inside operations), or
    - The file-based queue (for external Python bridge compatibility)
 
-5. **CMake build** — matches OTOY's `build-modules.sh` convention.
+6. **CMake build** — matches OTOY's `build-modules.sh` convention.
 
 ## API Surface (extern "C" — for Python FFI or other callers)
 

@@ -1,52 +1,38 @@
 /*
- * octanex.h — Unified header for the Octanex C++ module.
+ * octanex.h - Unified header for the Octanex C++ module.
  *
- * Provides the public interface for the OctaneX module. This header is
- * compatible with both the legacy build and the new C++ module.
+ * Public interface for the OctaneX module.
+ *
+ * DESIGN INTENT (parallel component):
+ *   This module is a standalone Octane X native module, built in parallel to the
+ *   Lua-based octanex-mcp (Hermes MCP) bridge. The two components are fully
+ *   independent:
+ *     - the module runs inside Octane X on its own, and the MCP bridge drives
+ *       Octane X over its own channel; neither depends on the other.
+ *     - when run together they converge on a shared `queue/` directory as a
+ *       common command channel (see octanex_fallback.cpp), so the module can act
+ *       as a sidecar for the bridge and the bridge can fall back to the queue
+ *       when the dylib is not loaded.
+ *   Together they expose a deeper/faster control path than either alone.
  */
 
 #ifndef OCTANEX_H
 #define OCTANEX_H
 
-#include <stddef.h>
+/* Include the main API definitions */
+#include "../octanex_module_api/octanemoduleapi.h"
 
-/*
- * Common return codes (used by octanex_module.cpp)
- */
-#define OCTANEX_SUCCESS            0
-#define OCTANEX_ERROR             -1
-#define OCTANEX_ERROR_NOT_FOUND   -2
-#define OCTANEX_ERROR_INVALID_ARG -3
+/* Result codes */
+#define OCTANEX_SUCCESS        0
+#define OCTANEX_ERROR         -1
+#define OCTANEX_ERROR_NOT_FOUND -2
 
+/* C++ bindings */
 #ifdef __cplusplus
 
-/* C++ additions */
-#include <string>
-#include <vector>
-
-typedef std::string string_t;
-typedef std::vector<string_t> string_list_t;
-
-extern "C" {
-
-/* C-compatible types */
-typedef struct {
-    float x, y, z;
-} vec3;
-
-typedef struct {
-    float x, y, z, w;
-} vec4;
-
-} /* extern "C" */
-
-/* OTOY module registration */
-typedef struct {
-    const char* name;
-    const char* display_name;
-    const char* module_id;
-    const char* type;
-} OtoyModuleInfo;
+namespace OctaneX {
+void g_version_init();
+} /* namespace OctaneX */
 
 #endif /* __cplusplus */
 

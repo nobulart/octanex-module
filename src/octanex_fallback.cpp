@@ -1,18 +1,29 @@
 /*
- * octanex_fallback.cpp — File-queue fallback implementation.
+ * octanex_fallback.cpp — File-queue fallback / shared-command-channel.
  *
- * When the module is running as a sidecar (not deeply integrated),
- * it reads/writes the same JSON queue as the Lua bridge:
- *   queue/
- *   ├── command.json
- *   ├── command_id1.json
- *   └── command_id2.json
+ * INDEPENDENCE + COMPOSABILITY:
+ *   This is the seam that lets the C++ module and the octanex-mcp (Hermes MCP)
+ *   bridge run independently yet together. Each component is fully usable on its
+ *   own; when both are deployed they rendezvous on a single `queue/` directory:
  *
- * This implementation provides a fallback path that processes
- * commands from the file queue when the C++ API is unavailable.
+ *     queue/
+ *     ├── command.json
+ *     ├── command_id1.json
+ *     └── command_id2.json
+ *
+ *   - The C++ module reads/writes this queue as a sidecar when the deep Octane
+ *     API path is unavailable (g_use_file_queue).
+ *   - The MCP bridge (src/octanex_mcp/bridge.py) writes to the SAME queue as its
+ *     fallback when the dylib is not loaded.
+ *   Because the queue format is shared, either side can pick up the other's
+ *   commands without a direct dependency.
+ *
+ *   This is a fallback path that processes commands from the file queue when the
+ *   C++ API is unavailable — and the bridge's default interoperable channel.
  */
 
 #include "octanex_fallback.h"
+#include "../octanex_module_api/octanemoduleapi.h"
 #include <fstream>
 #include <sstream>
 #include <cstring>
@@ -159,12 +170,11 @@ std::string file_queue_execute(const char* op, const char* payload) {
  * Get the next object name (for creating unique names).
  */
 std::string get_next_obj_name() {
-    char* name = getNextObjName();
-    std::string result(name);
+    const char* raw_name = getNextObjName();
+    std::string result(raw_name ? raw_name : "octanex_0");
     
     s_next_obj_id++;
-    snprintf(name, 256, "octanex_%d", s_next_obj_id);
-    strcpy(s_next_obj_name, name);
+    snprintf(s_next_obj_name, sizeof(s_next_obj_name), "octanex_%d", s_next_obj_id);
     
     return result;
 }

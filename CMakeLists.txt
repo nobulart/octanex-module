@@ -22,7 +22,6 @@ include_directories(src)
 # === Octane modules library ===
 add_library(octanex SHARED
     src/octanex_ffi.cpp
-    src/octanex_module.cpp
     src/octanex_commands.cpp
     src/octanex_fallback.cpp
     # Convenience wrappers from OTOY
@@ -38,10 +37,13 @@ endif()
 # linking against the full SDK at build time.
 target_compile_options(octanex PRIVATE
     -fPIC
-    -undefined dynamic_lookup
     -Wall
     -Wextra
 )
+
+# Pass -undefined dynamic_lookup to the linker so runtime symbols
+# (getModuleDirectory, getModuleInfo, etc.) resolve correctly.
+target_link_options(octanex PRIVATE "-undefined dynamic_lookup")
 
 # Set module output directory
 set_target_properties(octanex PROPERTIES
